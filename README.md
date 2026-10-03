@@ -11,6 +11,7 @@ An **enterprise-grade, multi-agent AI system** that automatically reviews GitHub
 - **LangGraph Fan-Out / Fan-In** — True parallel execution using LangGraph's native `StateGraph`.
 - **Structured Feedback** — Every finding includes Severity, Confidence, Line Number, and a concrete code fix.
 - **Graceful Degradation** — If any specialist agent fails (e.g. API timeout, rate limit), the pipeline continues and the Synthesizer produces a review using the available reports. No single agent failure can crash the entire review.
+- **Asynchronous Webhooks** — Uses FastAPI `BackgroundTasks` to instantly respond to GitHub, preventing webhook timeout failures.
 - **Secure Webhook Handling** — All incoming webhooks are verified using `X-Hub-Signature-256` HMAC authentication.
 - **Modular Codebase** — Clean, professional package structure. Every concern is separated into its own file.
 
@@ -213,6 +214,57 @@ REQUEST CHANGES ❌ — Critical security issue found.
 - [ ] **Background Queue** — Add Celery + Redis for enterprise-scale webhook processing
 
 ---
+
+## ⚠️ Known Limitations
+
+These are honest, known constraints of the current V1 implementation. Each one has a clear path to resolution in a future version.
+
+### 1. Diff-Only Context (No Full Codebase Awareness)
+The agents only receive the **git diff**, not the full codebase. This means they cannot see the definition of a function being called, the full class a method belongs to, or any imported module's behaviour.
+
+**Impact:** The agents may flag issues they lack full context to verify, or miss issues that only appear when combining the new code with existing code.
+
+**V2 Fix:** Implement RAG (Retrieval-Augmented Generation) — embed the repository and retrieve relevant file chunks alongside the diff at review time.
+
+---
+
+### 2. No Token / Context Window Guard
+There is no check on the size of the diff before sending it to Groq. A very large PR (e.g. 50+ files changed) can exceed the model's context window, causing the API to return a truncated or errored response.
+
+**Impact:** Large PRs may receive an incomplete or failed review with no clear user-facing error.
+
+**V2 Fix:** Parse the diff, measure token count using `tiktoken`, and split oversized diffs into per-file chunks. Run agents per-chunk, then hierarchically synthesize.
+
+---
+
+### 3. No Retry / Rate-Limit Back-Off
+The `call_llm()` function makes a single attempt to the Groq API with no retry logic. If the API returns a `429 Too Many Requests` or a transient `500` error, the node immediately falls back to its graceful degradation message.
+
+**Impact:** Transient errors that would succeed on a retry result in a section being marked as unavailable when it didn't need to be.
+
+**V2 Fix:** Wrap `call_llm()` with exponential back-off retry logic using `tenacity`.
+
+### 4. No Persistent State or Audit Log
+Reviews are not stored anywhere. Once a review is posted to GitHub, there is no local record of what was reviewed, what the agent found, or how long it took.
+
+**Impact:** Impossible to debug past reviews, measure agent accuracy over time, or build analytics on common issue types.
+
+**V2 Fix:** Persist each review run to a database (e.g. SQLite for local, PostgreSQL for production) with the PR metadata, agent outputs, and latency metrics.
+
+---
+
+### 5. In-Process Background Tasks (No Job Persistence)
+Webhook processing is offloaded using FastAPI's `BackgroundTasks`, which runs jobs **inside the same server process**. This is significantly better than blocking the HTTP response, but it is not a true durable queue.
+
+**Impact:**
+- If the server crashes or restarts mid-review, the in-flight job is **silently lost** with no retry.
+- Under high traffic (many PRs at once), all background tasks compete for the same process memory, which can degrade performance.
+- There is no visibility into queued jobs — you cannot see their status, failures, or retry counts.
+
+**V2 Fix:** Replace `BackgroundTasks` with **Celery + Redis**. Tasks are persisted to Redis before execution, survive server crashes, support automatic retries, and can be monitored via a dashboard (Flower).
+
+---
+
 
 ## 🔐 Security
 

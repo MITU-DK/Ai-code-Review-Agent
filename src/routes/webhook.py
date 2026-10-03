@@ -18,7 +18,7 @@ Those live in their own dedicated modules.
 import json
 import logging
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 from src.agent import analyze_code
@@ -32,6 +32,19 @@ router = APIRouter()
 # Only these PR actions trigger a code review
 PR_ACTIONS_TO_REVIEW = {"opened", "synchronize"}
 
+async def process_review_in_background(repo_full_name: str, pr_number: int, diff: str):
+    """
+    Background worker that runs the AI analysis and posts the comment.
+    This runs AFTER the webhook has already returned a 202 Accepted to GitHub.
+    """
+    try:
+        logger.info(f"🤖 Running AI agent on PR #{pr_number} in background...")
+        review = await analyze_code(diff)
+        
+        await post_pr_comment(repo_full_name, pr_number, review)
+        logger.info(f"✅ Review comment posted on PR #{pr_number}")
+    except Exception as e:
+        logger.error(f"❌ Background review process failed for PR #{pr_number}: {e}")
 
 @router.post(
     "/webhook",
@@ -41,24 +54,12 @@ PR_ACTIONS_TO_REVIEW = {"opened", "synchronize"}
 )
 async def handle_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     x_github_event: str = Header(None, alias="X-GitHub-Event"),
-    x_hub_signature_256: str = Header(None, alias="X-Hub-Signature-256"),  #getting signature 
+    x_hub_signature_256: str = Header(None, alias="X-Hub-Signature-256"),
 ) -> JSONResponse:
     """
     Receives and processes GitHub webhook events.
-
-    Security:
-        Validates the HMAC-SHA256 signature on every request.
-        Returns 403 Forbidden if the signature does not match.
-
-    Event Filtering:
-        - Ignores all events except 'pull_request'.
-        - Within 'pull_request' events, only processes 'opened' and 'synchronize'.
-
-    Returns:
-        202 Accepted  → Event received (and processed or intentionally ignored).
-        400 Bad Request → Invalid JSON body.
-        403 Forbidden → Signature verification failed.
     """
     # Step 1: Read raw body BEFORE any parsing (needed for signature check)
     payload_body = await request.body()
@@ -128,19 +129,15 @@ async def handle_webhook(
 
     logger.info(f"📄 Fetched diff for PR #{pr_number} ({len(diff)} characters)")
 
-    # Step 8 (Phase 3): Run the AI agent to analyze the code diff
-    logger.info(f"🤖 Running AI agent on PR #{pr_number}...")
-    review = await analyze_code(diff)
+    # Step 8 (Phase 3): Push the actual AI review to a background queue
+    logger.info(f"⏳ Queuing background review task for PR #{pr_number}...")
+    background_tasks.add_task(process_review_in_background, repo_full_name, pr_number, diff)
 
-    # Step 9 (Phase 2): Post the AI review comment back to the PR
-    await post_pr_comment(repo_full_name, pr_number, review)
-
-    logger.info(f"✅ Review comment posted on PR #{pr_number}")
-
+    # Return immediately so GitHub doesn't time out!
     return JSONResponse(
         content={
-            "status": "reviewed",
-            "message": f"PR #{pr_number} in '{repo_full_name}' reviewed and commented.",
+            "status": "queued",
+            "message": f"PR #{pr_number} in '{repo_full_name}' has been queued for review.",
             "pr_title": pr_title,
             "author": pr_author,
         },
