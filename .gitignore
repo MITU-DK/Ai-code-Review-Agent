@@ -29,3 +29,7 @@ Thumbs.db
 
 # Docker
 *.log
+
+# Local notes — not for the repo
+interview-questions.md
+TECH_CHOICES.md
