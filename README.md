@@ -10,6 +10,7 @@ An **enterprise-grade, multi-agent AI system** that automatically reviews GitHub
 - **Multi-Agent Architecture** — 3 specialist AI agents (Security, Performance, Style) run in parallel for superior analysis quality.
 - **LangGraph Fan-Out / Fan-In** — True parallel execution using LangGraph's native `StateGraph`.
 - **Structured Feedback** — Every finding includes Severity, Confidence, Line Number, and a concrete code fix.
+- **Graceful Degradation** — If any specialist agent fails (e.g. API timeout, rate limit), the pipeline continues and the Synthesizer produces a review using the available reports. No single agent failure can crash the entire review.
 - **Secure Webhook Handling** — All incoming webhooks are verified using `X-Hub-Signature-256` HMAC authentication.
 - **Modular Codebase** — Clean, professional package structure. Every concern is separated into its own file.
 
@@ -32,6 +33,23 @@ GitHub PR ──> POST /webhook ──> Performance Agent ───> Synthesizer
 | 🧹 **Code Quality & Style** | SRP violations, poor naming, DRY violations, swallowed exceptions |
 | 🧠 **Synthesizer** | Merges all 3 reports, removes duplicates, formats the final GitHub comment |
 
+### Graceful Degradation
+
+Each specialist agent is independently wrapped in fault isolation. If an agent fails for any reason (API timeout, rate limit, network error), it returns a clear fallback message instead of crashing the pipeline:
+
+```
+⚠️ Performance review unavailable — agent encountered an error.
+```
+
+The Synthesizer **always runs** with whatever reports are available, and the failure is logged for debugging. This means:
+
+| Scenario | Behaviour |
+|---|---|
+| All 3 agents succeed | Full review posted to PR ✅ |
+| 1 agent fails | Review posted with 2 sections + fallback notice for the failed one ✅ |
+| 2 agents fail | Review posted with 1 section + 2 fallback notices ✅ |
+| All 3 agents fail | Review posted with 3 fallback notices + Overall Assessment ✅ |
+
 ---
 
 ## 🗂️ Project Structure
@@ -48,9 +66,9 @@ Ai-Code-Review-Agent/
 │   │   ├── __init__.py       # 🔁 Engine switch: LangGraph vs asyncio
 │   │   ├── state.py          # ReviewState TypedDict (shared graph state)
 │   │   ├── llm.py            # Groq LLM client + call_llm() wrapper
-│   │   ├── nodes.py          # Specialist agent node functions
+│   │   ├── nodes.py          # Specialist agent nodes (asyncio engine) with per-node fault isolation
 │   │   ├── graph.py          # Engine 1: asyncio.gather() parallel execution
-│   │   └── graph_langgraph.py # Engine 2: True LangGraph fan-out/fan-in
+│   │   └── graph_langgraph.py # Engine 2: True LangGraph fan-out/fan-in with per-node fault isolation
 │   └── routes/
 │       ├── webhook.py        # POST /webhook — main PR review trigger
 │       └── health.py         # GET / — health check endpoint
@@ -134,7 +152,7 @@ USE_LANGGRAPH = True
 USE_LANGGRAPH = False
 ```
 
-Both engines produce **identical output**. The difference is purely how they orchestrate the parallel execution internally.
+Both engines produce **identical output** and both support full graceful degradation. The difference is purely how they orchestrate the parallel execution internally.
 
 ---
 
@@ -160,11 +178,11 @@ Both engines produce **identical output**. The difference is purely how they orc
 
 ---
 ## ⚡ Performance
-No issues found ✅
+⚠️ Performance review unavailable — agent encountered an error.
 
 ---
 ## 🧹 Code Quality & Maintainability
-...
+No issues found ✅
 
 ## Overall Assessment
 REQUEST CHANGES ❌ — Critical security issue found.
@@ -177,7 +195,7 @@ REQUEST CHANGES ❌ — Critical security issue found.
 | Technology | Purpose |
 |---|---|
 | **FastAPI** | High-performance async web framework |
-| **LangGraph** | Multi-agent graph orchestration |
+| **LangGraph** | Multi-agent graph orchestration with fan-out/fan-in |
 | **LangChain + Groq** | LLM inference (Llama 3.3 70B) |
 | **PyGithub** | GitHub API client |
 | **Python asyncio** | Concurrent parallel execution |

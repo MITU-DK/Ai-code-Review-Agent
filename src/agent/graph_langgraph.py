@@ -43,36 +43,48 @@ logger = logging.getLogger(__name__)
 async def security_node(state: ReviewState) -> dict:
     """Security & Correctness specialist — runs as a LangGraph async node."""
     logger.info("🛡️  [LangGraph Security Node] Running...")
-    result = await asyncio.to_thread(
-        call_llm,
-        SECURITY_AGENT_PROMPT,
-        f"Review this diff for Security and Correctness issues:\n\n{state['diff_text']}",
-    )
-    logger.info("🛡️  [LangGraph Security Node] Done.")
+    try:
+        result = await asyncio.to_thread(
+            call_llm,
+            SECURITY_AGENT_PROMPT,
+            f"Review this diff for Security and Correctness issues:\n\n{state['diff_text']}",
+        )
+        logger.info("🛡️  [LangGraph Security Node] Done.")
+    except Exception as e:
+        logger.error(f"❌ [LangGraph Security Node] Failed: {type(e).__name__}: {e}")
+        result = "⚠️ Security & Correctness review unavailable — agent encountered an error."
     return {"security_review": result}
 
 
 async def performance_node(state: ReviewState) -> dict:
     """Performance specialist — runs as a LangGraph async node."""
     logger.info("⚡ [LangGraph Performance Node] Running...")
-    result = await asyncio.to_thread(
-        call_llm,
-        PERFORMANCE_AGENT_PROMPT,
-        f"Review this diff for Performance issues:\n\n{state['diff_text']}",
-    )
-    logger.info("⚡ [LangGraph Performance Node] Done.")
+    try:
+        result = await asyncio.to_thread(
+            call_llm,
+            PERFORMANCE_AGENT_PROMPT,
+            f"Review this diff for Performance issues:\n\n{state['diff_text']}",
+        )
+        logger.info("⚡ [LangGraph Performance Node] Done.")
+    except Exception as e:
+        logger.error(f"❌ [LangGraph Performance Node] Failed: {type(e).__name__}: {e}")
+        result = "⚠️ Performance review unavailable — agent encountered an error."
     return {"performance_review": result}
 
 
 async def style_node(state: ReviewState) -> dict:
     """Code Quality & Style specialist — runs as a LangGraph async node."""
     logger.info("🧹 [LangGraph Style Node] Running...")
-    result = await asyncio.to_thread(
-        call_llm,
-        STYLE_AGENT_PROMPT,
-        f"Review this diff for Code Quality and Style issues:\n\n{state['diff_text']}",
-    )
-    logger.info("🧹 [LangGraph Style Node] Done.")
+    try:
+        result = await asyncio.to_thread(
+            call_llm,
+            STYLE_AGENT_PROMPT,
+            f"Review this diff for Code Quality and Style issues:\n\n{state['diff_text']}",
+        )
+        logger.info("🧹 [LangGraph Style Node] Done.")
+    except Exception as e:
+        logger.error(f"❌ [LangGraph Style Node] Failed: {type(e).__name__}: {e}")
+        result = "⚠️ Code Quality & Style review unavailable — agent encountered an error."
     return {"style_review": result}
 
 
